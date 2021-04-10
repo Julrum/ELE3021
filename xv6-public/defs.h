@@ -187,9 +187,12 @@ int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
 
 // prac_syscall.c
-int          		myfunction(char*);
+int          	myfunction(char*);
 
 // getppid.c
 int             getppid(void);
+
+// yield.c
+void            yield(void);
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
