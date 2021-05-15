@@ -120,6 +120,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int             getlev(void);
+void            setpriority(int pid, int priority);
+void            monopolize(int password);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -192,7 +195,5 @@ int          	myfunction(char*);
 // getppid.c
 int             getppid(void);
 
-// yield.c
-void            yield(void);
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

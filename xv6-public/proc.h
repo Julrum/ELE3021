@@ -1,3 +1,7 @@
+#define FCFS_TQ 200
+#define L0_TQ 4
+#define L1_TQ 8
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -49,6 +53,9 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int lev;
+  int runtime;
+  uint priority;
 };
 
 // Process memory is laid out contiguously, low addresses first:
@@ -56,3 +63,7 @@ struct proc {
 //   original data and bss
 //   fixed-size stack
 //   expandable heap
+
+int ismonopolize;
+void increaseruntime();
+void priorityboosting(void);

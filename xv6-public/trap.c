@@ -57,6 +57,7 @@ trap(struct trapframe *tf)
     if(cpuid() == 0){
       acquire(&tickslock);
       ticks++;
+      increaseruntime();
       wakeup(&ticks);
       release(&tickslock);
     }
@@ -106,11 +107,44 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
 
-  // Force process to give up CPU on clock tick.
-  // If interrupts were on while locks held, would need to check nlock.
-  if(myproc() && myproc()->state == RUNNING &&
-     tf->trapno == T_IRQ0+IRQ_TIMER)
-    yield();
+  #ifdef FCFS_SCHED
+    if(myproc() && myproc()->state == RUNNING && myproc()->runtime >= FCFS_TQ){
+      myproc()->killed = 1;
+      cprintf("process %d killed\n", myproc()->pid);
+    }
+  #elif MULTILEVEL_SCHED
+    if(myproc() && myproc()->state == RUNNING){
+      if(myproc()->lev == 0 && tf->trapno == T_IRQ0+IRQ_TIMER){
+        yield();
+      } else if(myproc()->lev == 1 && myproc()->runtime >= FCFS_TQ){
+        myproc()->killed = 1;
+        cprintf("process %d killed\n", myproc()->pid);
+      }
+    }
+  #elif MLFQ_SCHED
+    if(myproc() && myproc()->state == RUNNING && !ismonopolize){
+      if(myproc()->lev == 0 && myproc()->runtime >= L0_TQ){
+        myproc()->lev = 1;
+        myproc()->runtime = 0;
+        yield();
+      } else if(myproc()->lev == 1 && myproc()->runtime >= L1_TQ){
+        if(myproc()->priority == 0){
+          myproc()->priority = 0;
+        } else {
+          myproc()->priority -= 1;
+        }
+        myproc()->runtime = 0;
+        yield();
+      }
+    }
+    if(!ismonopolize && ticks%200 == 0)
+      priorityboosting();
+  #else
+    // Force process to give up CPU on clock tick.
+    // If interrupts were on while locks held, would need to check nlock.
+    if(myproc() && myproc()->state == RUNNING && tf->trapno == T_IRQ0+IRQ_TIMER)
+      yield();
+  #endif
 
   // Check if the process has been killed since we yielded
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)

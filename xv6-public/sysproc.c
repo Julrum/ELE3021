@@ -89,3 +89,42 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+void sys_yield(void)
+{
+  return yield();
+}
+
+int
+sys_getlev(void)
+{
+  return getlev();
+}
+
+int
+sys_setpriority(void)
+{
+  int pid, priority;
+  if(argint(0, &pid) < 0)
+    return -1;
+  if(argint(1, &priority) < 0)
+    return -1;
+  if(myproc()->pid != pid)
+    return -1;
+  if(priority < 0 || priority > 10)
+    return -2;
+  
+  setpriority(pid, priority);
+  return 0;
+}
+
+int 
+sys_monopolize(void)
+{
+  int password;
+
+  if(argint(0, &password) < 0)
+    return -1;
+  monopolize(password);
+  return 0;
+}

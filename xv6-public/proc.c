@@ -88,6 +88,9 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  p->lev = 0;
+  p->runtime = 0;
+  p->priority = 0;
 
   release(&ptable.lock);
 
@@ -120,6 +123,7 @@ found:
 void
 userinit(void)
 {
+  ismonopolize = 0;
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
@@ -319,6 +323,186 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
+#ifdef FCFS_SCHED
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+  
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    struct proc *nextp = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      if(nextp == 0 || p->pid < nextp->pid){
+        nextp = p;
+      }
+    }
+
+    if(nextp != 0){
+      c->proc = nextp;
+      switchuvm(nextp);
+      nextp->state = RUNNING;
+      
+      swtch(&(c->scheduler), nextp->context);
+      switchkvm();
+
+      c->proc = 0;
+    }
+    release(&ptable.lock);
+  }
+}
+#elif MULTILEVEL_SCHED
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+  
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    struct proc *nextp = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+
+      if(p->pid%2)
+        p->lev = 1;
+      else
+        p->lev = 0;
+    }
+
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      
+      if(p->lev == 0){
+        nextp = p;
+        break;
+      }
+    }
+
+    if(nextp != 0){
+      c->proc = nextp;
+      switchuvm(nextp);
+      nextp->state = RUNNING;
+
+      swtch(&(c->scheduler), nextp->context);
+      switchkvm();
+
+      c->proc = 0;
+    } else {
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        if(p->state != RUNNABLE)
+          continue;
+  
+        if(p->lev == 1){
+          if(nextp == 0 || p->pid < nextp->pid){
+            nextp = p;
+          }      
+        }
+      }
+
+      if(nextp != 0){
+        c->proc = nextp;
+        switchuvm(nextp);
+        nextp->state = RUNNING;
+        nextp->runtime = 0;
+
+        swtch(&(c->scheduler), nextp->context);
+        switchkvm();
+
+        c->proc = 0;
+      }
+    }
+    release(&ptable.lock);
+
+  }
+}
+#elif MLFQ_SCHED
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+  
+  for(;;){
+    // Enable interrupts on this processor.
+    sti();
+
+    // Loop over process table looking for process to run.
+    acquire(&ptable.lock);
+    struct proc *nextp = 0;
+
+    if(ismonopolize){
+      release(&ptable.lock);
+      continue;
+    }
+
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+      
+      if(p->lev == 0){
+        nextp = p;
+        break;
+      }
+    }
+
+    if(nextp != 0){
+      c->proc = nextp;
+      switchuvm(nextp);
+      nextp->state = RUNNING;
+
+      swtch(&(c->scheduler), nextp->context);
+      switchkvm();
+
+      c->proc = 0;
+    } else {
+      for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+        if(p->state != RUNNABLE)
+          continue;
+
+        if(p->lev == 1){
+          if(nextp == 0){
+            nextp = p;
+          } else if((p->priority > nextp->priority) || (p->priority == nextp->priority && p-> pid < nextp->pid)){
+            nextp = p;
+          }
+        }
+      }
+
+      if(nextp != 0){
+        c->proc = nextp;
+        switchuvm(nextp);
+        nextp->state = RUNNING;
+        nextp->runtime = 0;
+
+        swtch(&(c->scheduler), nextp->context);
+        switchkvm();
+
+        c->proc = 0;
+      }
+    }
+    release(&ptable.lock);
+
+  }
+}
+#else
 void
 scheduler(void)
 {
@@ -354,6 +538,7 @@ scheduler(void)
 
   }
 }
+#endif
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -387,6 +572,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
+  myproc()->runtime = 0;
   sched();
   release(&ptable.lock);
 }
@@ -531,4 +717,68 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+int
+getlev(void)
+{
+  return myproc()->lev;
+}
+
+void
+setpriority(int pid, int priority)
+{
+  struct proc *p;
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == pid){
+      p->priority = priority;
+      break;
+    }
+  }
+  release(&ptable.lock);
+}
+
+void
+monopolize(int password)
+{
+  if(password != 2017029670){
+    myproc()->killed = 1;
+    cprintf("monopolize failed\n");
+    cprintf("process %d killed\n", myproc()->pid);
+    ismonopolize = 0;
+    return;
+  } else {
+    if(ismonopolize){
+      ismonopolize = 0;
+      myproc()->lev = 0;
+      myproc()->priority = 0;
+    } else {
+      ismonopolize = 1;
+  }
+  } 
+}
+
+void priorityboosting(void)
+{
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    p->lev = 0;
+    p->runtime = 0;
+    p->priority = 0;
+  }
+  release(&ptable.lock);
+}
+
+void increaseruntime() {
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == RUNNING)
+      p->runtime++;
+  }
+  release(&ptable.lock);
 }
